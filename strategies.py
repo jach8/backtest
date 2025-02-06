@@ -256,25 +256,25 @@ class Policy:
         if not isinstance(name, str):
             raise ValueError("name must be a string")
 
-        perf_pct = perf['port_val'].pct_change().dropna() - rf_rate
-        adr = perf_pct.mean()
-        sddr = perf_pct.std()
-        cr = ((perf['port_val'].iloc[-1] / perf['port_val'].iloc[0]) - 1)  # cumulative return
-        sr = np.sqrt(252) * (adr / sddr)  # sharpe ratio
-
-        logger.info("Computed portfolio stats for %s", name)
-        return pd.DataFrame({
+        # Compute the portfolio statistics, Risk Free Rate of return 
+        perf_pct = perf['port_val']
+        stats = PortfolioStats(port = perf_pct, risk_free_rate = rf_rate)
+        stat_df = stats._portfolio_stats(name=name)
+        out = pd.DataFrame({
             "Stock": self.stock.upper(),
             "Days": perf.shape[0],
             "StartDate": perf.index[0],
             "EndDate": perf.index[-1],
             "StartBalance": perf['port_val'].iloc[0],
             "EndBalance": perf['port_val'].iloc[-1],
-            "CumReturn%": cr * 100,
-            "AvgDailyRet%": adr * 100,
-            "StdDevRet": sddr,
-            "Sharpe": sr
+            
         }, index=[name])
+        out = pd.concat([out, stat_df], axis=1)
+
+        
+        
+        logger.info("Computed portfolio stats for %s", name)
+        return out
 
     def performance(self, orders: pd.DataFrame, sv: float, name: str = "Strategy", commission: float = 0.95, impact: float = 0.005) -> pd.DataFrame:
         """
@@ -323,8 +323,6 @@ class Policy:
         bh = self.buy_and_hold(sv)
         bhdf = self.evaluate_policy(bh, sv=sv, commission=0, impact=0, name = "Buy and Hold")
         b = self._qs(rf_rate=0.0, name="Buy and Hold")
-        
-        
         
         # Optimal Policy
         op = self.optimal_policy(sv)
@@ -376,9 +374,11 @@ if __name__ == "__main__":
             name, path = line.strip().split('=')
             connections[name.lower()] = pre + path
 
+    P = Policy(connections)
     orders1 = pd.read_csv('orders/DTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
     orders2 = pd.read_csv('orders/RTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
-
-    P = Policy(connections)
-    print(P.eval_multiple_orders(orders=[orders1, orders2], names=['DTLEARN', 'RTLEARN'], sv=100000))
-
+    df = P.eval_multiple_orders(orders=[orders1, orders2], names=['DTLEARN', 'RTLEARN'], sv=100000)
+    
+    print(df)
+    print()
+    print(P.policies.keys())
