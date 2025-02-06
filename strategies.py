@@ -10,6 +10,7 @@ import time
 # Database Managment and Market Simulator 
 from dbm import DBManager
 from simulator import MarketSim
+from PortfolioStats import PortfolioStats
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -49,8 +50,15 @@ class Policy:
 
     def _initialize_params(self, orders: pd.DataFrame) -> None:
         """
-        Initialize the parameters for the policy.
-
+        Initialize the parameters for the policy. Creates the following attributes:
+            1. orders: Orders DataFrame
+            2. intra_day_flag: Flag for intra-day trading
+            3. stock: Stock ticker
+            4. start_date: Start date
+            5. end_date: End date
+            6. trade_size: Number of shares to trade
+            7. stock_prices: Stock price data
+    
         Args:
             orders (pd.DataFrame): Orders DataFrame.
         """
@@ -71,6 +79,7 @@ class Policy:
         self.end_date = ed
         self.trade_size = size
         self.stock_prices = self.get_data(stock, sd, ed)
+        self.policies = {}
         logger.info("Policy parameters initialized for stock=%s, start_date=%s, end_date=%s", stock, sd, ed)
 
     def determine_max_shares(self, price: float, cash: float) -> int:
@@ -101,7 +110,7 @@ class Policy:
             pd.DataFrame: Stock price data.
         """
         try:
-            stock_prices = self.marketsim.prices([stock], intra_day=self.intra_day_flag)[sd:ed]
+            stock_prices = self.marketsim.prices([stock], start_date=sd, end_date=ed, intra_day=self.intra_day_flag)
             if stock_prices.empty:
                 raise ValueError(f"No data found for stock={stock}, start_date={sd}, end_date={ed}")
             return stock_prices.sort_index(ascending=True)
@@ -170,6 +179,7 @@ class Policy:
             List[dt.datetime]: List of dates.
         """
         prices = self.marketsim.prices([ticker], intra_day=self.intra_day_flag)
+        # prices = self.stock_prices.copy()
         if shift is None:
             return prices[sd:ed].index.tolist()
         else:
@@ -179,13 +189,20 @@ class Policy:
             end = pr[pr['Date'] <= ed].index[-1] + shift
             return pr.loc[start:end, 'Date'].tolist()
 
-    def evaluate_policy(self, orders: pd.DataFrame, sv: float, commission: float = 9.95, impact: float = 0.005) -> pd.DataFrame:
+    def evaluate_policy(self, 
+                        orders: pd.DataFrame,
+                        sv: float, 
+                        name:str = "port",
+                        commission: float = 9.95,
+                        impact: float = 0.005
+        ) -> pd.DataFrame:
         """
         Evaluate a trading policy.
 
         Args:
             orders (pd.DataFrame): Orders DataFrame with columns ['Symbol', 'Order', 'Shares'] and a datetime index.
             sv (float): Starting value of the account.
+            name (str): Name of the strategy.
             commission (float): Commission per trade.
             impact (float): Market impact factor.
 
@@ -206,16 +223,16 @@ class Policy:
 
         logger.info("Evaluating policy with starting value=$%.2f, commission=$%.2f, impact=%.3f", sv, commission, impact)
         try:
-            pv = self.marketsim.compute_portvals(orders, sv, commission, impact)
-            self.policies = self.marketsim.tracking.copy()
+            tracking_dict = self.marketsim.compute_portvals(orders, sv, commission, impact)
+            self.policies[name] = tracking_dict.copy()
             self.stock = orders['Symbol'].iloc[0].lower()
             logger.info("Policy evaluation completed successfully")
-            return pv.round(3)
+            return tracking_dict['portfolio']
         except Exception as e:
             logger.error("Error during policy evaluation: %s", e)
             raise
 
-    def _qs(self, perf: pd.DataFrame, rf_rate: float = 0.0, name: str = 'port') -> pd.DataFrame:
+    def _qs(self, rf_rate: float = 0.0, name: str = 'port') -> pd.DataFrame:
         """
         Return a DataFrame of the portfolio stats.
 
@@ -227,6 +244,9 @@ class Policy:
         Returns:
             pd.DataFrame: Portfolio statistics.
         """
+        # Get the portfolio values from the policies
+        perf = self.policies[name]['portfolio']
+        
         if not isinstance(perf, pd.DataFrame):
             raise ValueError("perf must be a pandas DataFrame")
         if 'port_val' not in perf.columns:
@@ -297,15 +317,19 @@ class Policy:
         if not isinstance(sv, (int, float)) or sv <= 0:
             raise ValueError("sv (starting value) must be a positive number")
 
+        ################################################################################################
         lodf = []
         # Buy and Hold
         bh = self.buy_and_hold(sv)
-        bhdf = self.evaluate_policy(bh, sv=sv, commission=0, impact=0)
-        b = self._qs(bhdf, name="Buy and Hold")
+        bhdf = self.evaluate_policy(bh, sv=sv, commission=0, impact=0, name = "Buy and Hold")
+        b = self._qs(rf_rate=0.0, name="Buy and Hold")
+        
+        
+        
         # Optimal Policy
         op = self.optimal_policy(sv)
-        optdf = self.evaluate_policy(op, sv=sv, commission=0, impact=0)
-        a = self._qs(optdf, name="Optimal Policy")
+        optdf = self.evaluate_policy(op, sv=sv, commission=0, impact=0, name = "Optimal Policy")
+        a = self._qs(rf_rate = 0.0, name="Optimal Policy")
 
         lodf.append(pd.concat([b, a], axis=0))
         return pd.concat(lodf)
@@ -336,8 +360,9 @@ class Policy:
 
         self._initialize_params(orders[0])
         pdf = self.__strat_perf(sv)
-        strats = [self.evaluate_policy(o, sv, commission=commission, impact=impact) for o in orders]
-        pdfs = [self._qs(perf=strats[x], name=names[x]) for x in range(len(orders))]
+        strats = [self.evaluate_policy(o, sv, commission=commission, impact=impact, name = names[j]) for j, o in enumerate(orders)]
+        pdfs = [self._qs(rf_rate = 0.02, name=names[x]) for x in range(len(orders))]
+        # Concatenate the performance metrics. 
         sdf = pd.concat(pdfs)
         self.list_eval = dict(zip(names, strats))
         logger.info("Evaluated %d strategies", len(orders))

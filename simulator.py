@@ -78,12 +78,24 @@ class MarketSim(DBManager):
     """
 
     def __init__(self, connections: Dict[str, str], verbose: bool = False) -> None:
+        """
+        Initialize the MarketSim class, this will also create an empty dict, to store the tracking information.
+        
+        Args: 
+            connections: Dict[str, str]: The database connections to query stock price information.
+            verbose: bool: If True, prints detailed logs of operations. Default is False.
+        
+        Returns:
+            None
+        
+        
+        """
         super().__init__(connections)
         self.verbose: bool = verbose
         self.tracking: Dict[str, pd.DataFrame] = {}
         logger.info("MarketSim initialized with verbose=%s", verbose)
         
-    def get_close(self, stocks: List[str], start: dt.datetime = None, end: dt.datetime = None) -> pd.DataFrame:
+    def get_close(self, stocks: List[str], start: dt.datetime = None, end: dt.datetime = None, intra_day_flag: bool= False) -> pd.DataFrame:
         """
         Get the close prices for the specified stocks.
 
@@ -91,6 +103,7 @@ class MarketSim(DBManager):
             stocks (List[str]): List of stock symbols.
             start (dt.datetime): Start date for the price query.
             end (dt.datetime): End date for the price query.
+            intra_day_flag (bool): If True, retrieves intra-day prices. Default is False.
 
         Returns:
             pd.DataFrame: DataFrame containing the close prices for the specified stocks.
@@ -102,7 +115,11 @@ class MarketSim(DBManager):
             logger.info("Fetching close prices for stocks: %s", stocks)
         
         out = []
-        with self.get_connection('daily_price_db') as conn:
+        if intra_day_flag: 
+            con = 'intra_day_db'
+        else:
+            con = 'daily_price_db'
+        with self.get_connection(con) as conn:
             for stock in stocks:
                 q = f'''select date(date) as "Date", close as "{stock}" from {stock} order by date(date) asc'''
                 df = pd.read_sql_query(q, conn, parse_dates=['Date'], index_col='Date')
@@ -134,7 +151,7 @@ class MarketSim(DBManager):
             if not intra_day:
                 out = self.get_close(stocks=syms, start=start_date, end=end_date)
             else:
-                out = self.get_intraday_close(syms)
+                out = self.get_close(stocks=syms, start=start_date, end=end_date, intra_day_flag=True)
 
             if start_date is None:
                 return out
@@ -146,10 +163,17 @@ class MarketSim(DBManager):
     def __SetupSim(self, orders: pd.DataFrame, start_val: float) -> None:
         """
         Initialize the simulation.
-
+        This will also initialize the tracking dictionary, which includes:
+            - trades: Dataframe to track the number of shares bought or sold
+            - holdings: Dataframe to track the number of shares held
+            - stock_prices: Closing Prices for a stock. 
+        
         Args:
             orders (pd.DataFrame): The orders DataFrame with columns ['Symbol', 'Order', 'Shares'].
             start_val (float): The starting value of the portfolio.
+        
+        Returns: 
+            None
         """
         logger.info("Setting up simulation with start_val=%.2f", start_val)
         orders.index = pd.to_datetime(orders.index)
@@ -207,16 +231,53 @@ class MarketSim(DBManager):
         return available_shares >= shares
 
     def __get_current_cash(self, date: dt.datetime) -> float:
-        """Get the current cash in the account."""
+        """
+        Get the current cash in the account.
+        
+        Args:
+            date (dt.datetime): The date of the trade.
+            
+        Returns:
+            float: The current cash balance.
+    
+        """
         return self.tracking['holdings'].cumsum().loc[date, 'Cash']
 
     def __get_current_shares(self, date: dt.datetime, stock: str) -> int:
-        """Get the current shares of a stock in the account."""
+        """
+        Get the current shares of a stock in the account.
+        
+        Args:
+            date (dt.datetime): The date of the trade.
+            stock (str): The stock symbol.
+        
+        Returns:
+            int: The current number of shares of the stock.
+        """
         return int(self.tracking['holdings'].cumsum().loc[date, stock])
 
     def __BuyOrder(self, date: dt.datetime, stock: str, shares: int, stock_price: float, 
                    commission: float = 5.50, impact: float = 0.005) -> None:
-        """Execute a Buy Order."""
+        """
+        Execute a Buy Order. This function will update the tracking Dictionary with the new trade: 
+            Trades: 
+                - Subtract the cost of the trade from the cash balance.
+                - Add the number of shares to the stock.
+            Holdings:
+                - Subtract the cost of the trade from the cash balance.
+                - Add the number of shares to the stock.
+        
+        Args:
+            date (dt.datetime): The date of the trade.
+            stock (str): The stock symbol.
+            shares (int): The number of shares to buy.
+            stock_price (float): The price of the stock.
+            commission (float): The commission for the trade. Default is 5.50.
+            impact (float): The market impact of the trade. Default is 0.005.
+        
+        Returns:
+            None
+        """
         cost = shares * stock_price * (1 + impact) + commission
         if not self.__check_cash(date, cost):
             logger.warning("Insufficient Funds to Buy %d shares of %s @ %.2f", shares, stock.upper(), stock_price)
@@ -229,7 +290,26 @@ class MarketSim(DBManager):
 
     def __SellOrder(self, date: dt.datetime, stock: str, shares: int, stock_price: float, 
                     commission: float = 5.50, impact: float = 0.005) -> None:
-        """Execute a Sell Order."""
+        """
+        Execute a Sell Order. This function will update the tracking Dictionary with the new trade:
+            Trades:
+                - Add the cost of the trade to the cash balance.
+                - Subtract the number of shares from the stock.
+            Holdings:
+                - Add the cost of the trade to the cash balance.
+                - Subtract the number of shares from the stock.    
+        
+        Args:
+            date (dt.datetime): The date of the trade.
+            stock (str): The stock symbol.
+            shares (int): The number of shares to sell.
+            stock_price (float): The price of the stock.
+            commission (float): The commission for the trade. Default is 5.50.
+            impact (float): The market impact of the trade. Default is 0.005.
+        
+        Returns:
+            None
+        """
         if not self.__check_shares(date, stock, shares):
             logger.warning("Insufficient Shares to Sell %d shares of %s", shares, stock.upper())
             return
@@ -241,7 +321,20 @@ class MarketSim(DBManager):
         logger.info("Sell Order executed: %d shares of %s @ %.2f", shares, stock.upper(), stock_price)
 
     def __HoldOrder(self, date: dt.datetime, stock: str, stock_price: float) -> None:
-        """Execute a Hold Order."""
+        """
+        Execute a Hold Order.
+        This function will update the tracking Dictionary with the new trade:
+            Trades:
+                - No change in the cash balance or shares.
+            Holdings:
+                - No change in the cash balance or shares.
+            
+        Args:
+            date (dt.datetime): The date of the trade.
+            stock (str): The stock symbol.
+            stock_price (float): The price of the stock.
+        
+        """
         self.tracking['trades'].loc[date, stock] = 0
         logger.info("Hold Order executed for %s", stock)
 
@@ -253,7 +346,22 @@ class MarketSim(DBManager):
 
     def __ExecuteOrder(self, date: dt.datetime, stock: str, order: str, shares: int, stock_price: float, 
                        commission: float = 5.50, impact: float = 0.005) -> None:
-        """Execute an Order (Buy, Sell, or Hold)."""
+        """
+        Execute an Order (Buy, Sell, or Hold). This will execute the order. 
+        
+        Args:
+            date (dt.datetime): The date of the trade.
+            stock (str): The stock symbol.
+            order (str): The order type (BUY, SELL, or HOLD).
+            shares (int): The number of shares to buy or sell.
+            stock_price (float): The price of the stock.
+            commission (float): The commission for the trade. Default is 5.50.
+            impact (float): The market impact of the trade. Default is 0.005.
+        
+        Returns:
+            None
+        
+        """
         logger.info("Executing %s order for %s: %d shares", order, stock, shares)
         if order == 'BUY':
             self.__BuyOrder(date, stock, shares, stock_price, commission, impact)
@@ -263,20 +371,44 @@ class MarketSim(DBManager):
             self.__HoldOrder(date, stock, stock_price)
         self.__VerboseOrder(date, stock, order, shares)
 
-    def compute_portvals(self, orders: pd.DataFrame, startval: float, commission: float = 5.50, impact: float = 0.005) -> pd.DataFrame:
-        """Compute the portfolio value."""
+    def compute_portvals(self, orders: pd.DataFrame, startval: float, commission: float = 5.50, impact: float = 0.005) -> Dict[str, pd.DataFrame]:
+        """
+        Compute the portfolio value. This function will iterate through the orders dataframe and execute the orders. 
+        This function also creates two new entries in the tracking dictionary:
+            1. Orders: The orders DataFrame
+            2. Portfolio: The portfolio value DataFrame
+        
+
+        Args:
+            orders (pd.DataFrame): The orders DataFrame with columns ['Symbol', 'Order', 'Shares'].
+            startval (float): The starting value of the portfolio.
+            commission (float): The commission for each trade. Default is 5.50.
+            impact (float): The market impact of each trade. Default is 0.005.
+        
+        Returns:
+            Dict[str, pd.DataFrame]: A dictionary containing the tracking information
+                example:
+                    {
+                    'trades': pd.DataFrame, 
+                    'holdings': pd.DataFrame, 
+                    'stock_prices': pd.DataFrame, 
+                    'portfolio': pd.DataFrame
+                    'orders': pd.DataFrame
+                    }
+        """
         self.__SetupSim(orders, startval)
-        for date, row in tqdm(orders.iterrows(), desc="Processing Orders"):
+        self.tracking['orders'] = orders
+        for date, row in orders.iterrows():
             stock = row['Symbol']
             order = row['Order']
             shares = row['Shares']
             stock_price = self.tracking['stock_prices'].loc[date, stock]
             self.__ExecuteOrder(date, stock, order, shares, stock_price, commission, impact)
-            self.port_val = self.tracking['stock_prices'] * self.tracking['trades'].cumsum()
-            self.port_val['port_val'] = self.port_val.sum(axis=1)
+            self.tracking['portfolio'] = self.tracking['stock_prices'] * self.tracking['trades'].cumsum()
+            self.tracking['portfolio']['port_val'] = self.tracking['portfolio'].sum(axis=1)
             
-        logger.info(f"Portfolio value computation completed, final value: ${self.port_val['port_val'].iloc[-1]:,.2f}")
-        return self.tracking['holdings']
+        logger.info(f"Portfolio value computation completed, final value: ${self.tracking['portfolio']['port_val'].iloc[-1]:,.2f}")
+        return self.tracking
         
 if __name__ == "__main__":
     print("\n(26) To whatever and wherever the restless and unsteady mind wanders this mind should be restrained then and there and brought under the control of the self alone. (And nothing else) \n\n")
@@ -288,12 +420,11 @@ if __name__ == "__main__":
             connections[name.lower()] = pre + path
             
     ms = MarketSim(connections, verbose = True)
-    orders = pd.read_csv('bin/orders/DTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
-    orders = pd.read_csv('bin/orders/additional_orders/orders2.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
-    port = ms.compute_portvals(orders, 1000000, commission = 9.95, impact = 0.005)
+    orders = pd.read_csv('orders/additional_orders/orders2.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
+    orders = pd.read_csv('orders/DTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
+    d = ms.compute_portvals(orders, 1000000, commission = 9.95, impact = 0.005)
     #  $1,010,884.73    
     
-    d = ms.tracking.copy()   
     # for i, k in d.items():
     #     print(f'\n\n{i}\n\n')
     #     print(k)
