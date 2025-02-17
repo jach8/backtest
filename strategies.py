@@ -377,7 +377,7 @@ if __name__ == "__main__":
     P = Policy(connections)
     orders1 = pd.read_csv('orders/DTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
     orders2 = pd.read_csv('orders/RTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
-    df = P.eval_multiple_orders(orders=[orders1, orders2], names=['DTLEARN', 'RTLEARN'], sv=100000)
+    df = P.eval_multiple_orders(orders=[orders1, orders2], names=['DTLEARN', 'RTLEARN'], sv=10_000)
     
     print(df)
     print()
