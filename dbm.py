@@ -1,191 +1,169 @@
-import sqlite3
-from contextlib import contextmanager
-from typing import Dict, Any
-import logging
+"""Database management module for backtesting system."""
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import sqlite3
+import logging
+from typing import Dict, List, Optional, Any
+from contextlib import contextmanager
+
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 class DBManager:
-    """
-    A database connection pooling manager for SQLite databases.
-
-    This class manages a pool of database connections, allowing for efficient reuse of connections.
-    It also provides context manager support for handling connections safely.
-
-    Args:
-        connections (Dict[str, str]): A dictionary of database names mapped to their file paths.
-            Example:
-                connections = {
-                    'price_db': 'path_to_price_db',
-                    'user_db': 'path_to_user_db'
-                }
-        pool_size (int): The maximum number of connections to maintain in the pool for each database.
-            Default is 5.
-    """
-
+    """Manages database connections and operations."""
+    
     def __init__(self, connections: Dict[str, str], pool_size: int = 5) -> None:
-        self.connections: Dict[str, str] = connections
-        self.pool_size: int = pool_size
-        self.pool: Dict[str, list[sqlite3.Connection]] = {db_name: [] for db_name in connections}
-        logger.info("DBManager initialized with connections: %s and pool size: %d", self.connections.keys(), pool_size)
-
-    def _get_connection_from_pool(self, db_name: str) -> sqlite3.Connection:
         """
-        Retrieves an available connection from the pool or creates a new one if the pool is not full.
-
+        Initialize DBManager with connection information.
+        
         Args:
-            db_name (str): The name of the database.
-
-        Returns:
-            sqlite3.Connection: An available connection from the pool.
-
+            connections (Dict[str, str]): Dictionary mapping database names to paths
+            pool_size (int): Maximum number of connections per database
+            
         Raises:
-            ValueError: If the database name is not found in the connections dictionary.
+            TypeError: If connections is None
+            ValueError: If connections is empty
+        """
+        if connections is None:
+            raise TypeError("Connections dictionary cannot be None")
+        if not connections:
+            raise ValueError("Connections dictionary cannot be empty")
+            
+        self.connections = connections
+        self.pool_size = pool_size
+        self.pool: Dict[str, List[sqlite3.Connection]] = {
+            db_name: [] for db_name in connections
+        }
+        
+        logger.info(f"DBManager initialized with connections: {self.connections.keys()} "
+                   f"and pool size: {self.pool_size}")
+
+    def get_connection(self, db_name: str) -> sqlite3.Connection:
+        """
+        Get a database connection from the pool or create a new one.
+        
+        Args:
+            db_name (str): Name of the database to connect to
+            
+        Returns:
+            sqlite3.Connection: Database connection
+            
+        Raises:
+            ValueError: If database name is not found
+            RuntimeError: If pool is full
+            sqlite3.Error: If connection fails
         """
         if db_name not in self.connections:
-            logger.error("Database %s not found in the connections", db_name)
+            logger.error(f"Database {db_name} not found in the connections")
             raise ValueError(f"Database {db_name} not found in the connections")
 
-        # Check if there is an available connection in the pool
+        # Try to get an existing connection from the pool
         if self.pool[db_name]:
-            conn = self.pool[db_name].pop(0)
-            logger.info("Reusing existing connection for database: %s", db_name)
+            conn = self.pool[db_name].pop()
+            logger.info(f"Reusing existing connection for database: {db_name}")
             return conn
 
-        # If the pool is not full, create a new connection
+        # Create new connection if pool isn't full
         if len(self.pool[db_name]) < self.pool_size:
-            conn = sqlite3.connect(self.connections[db_name])
-            logger.info("Created new connection for database: %s", db_name)
+            conn = self._create_connection(db_name)
+            logger.info(f"Created new connection for database: {db_name}")
             return conn
-
-        # If the pool is full, wait for a connection to become available (not implemented here)
-        logger.error("Connection pool for database %s is full", db_name)
+            
+        logger.error(f"Connection pool for database {db_name} is full")
         raise RuntimeError(f"Connection pool for database {db_name} is full")
 
-    def _return_connection_to_pool(self, db_name: str, conn: sqlite3.Connection) -> None:
+    def return_connection(self, db_name: str, conn: sqlite3.Connection) -> None:
         """
-        Returns a connection to the pool for reuse.
-
+        Return a connection to the pool.
+        
         Args:
-            db_name (str): The name of the database.
-            conn (sqlite3.Connection): The connection to return to the pool.
+            db_name (str): Name of the database
+            conn (sqlite3.Connection): Connection to return
         """
         if len(self.pool[db_name]) < self.pool_size:
             self.pool[db_name].append(conn)
-            logger.info("Connection returned to pool for database: %s", db_name)
+            logger.info(f"Connection returned to pool for database: {db_name}")
         else:
+            logger.info(f"Pool for database {db_name} is full; connection closed")
             conn.close()
-            logger.info("Pool for database %s is full; connection closed", db_name)
 
-    @contextmanager
-    def get_connection(self, db_name: str) -> Any:
+    def _create_connection(self, db_name: str) -> sqlite3.Connection:
         """
-        Context manager for retrieving a database connection from the pool.
-
-        This method provides a connection to the specified database and ensures it is returned
-        to the pool after use.
-
+        Create a new database connection.
+        
         Args:
-            db_name (str): The name of the database to connect to.
-
-        Yields:
-            sqlite3.Connection: A connection object for the specified database.
-
+            db_name (str): Name of the database to connect to
+            
+        Returns:
+            sqlite3.Connection: New database connection
+            
         Raises:
-            ValueError: If the specified database name is not found in the connections dictionary.
+            sqlite3.Error: If connection fails
         """
-        conn = None
         try:
-            conn = self._get_connection_from_pool(db_name)
-            yield conn
+            return sqlite3.connect(self.connections[db_name])
         except sqlite3.Error as e:
-            logger.error("SQLite error occurred while connecting to %s: %s", db_name, e)
+            logger.error(f"SQLite error occurred while connecting to {db_name}: {str(e)}")
             raise
-        finally:
-            if conn:
-                self._return_connection_to_pool(db_name, conn)
 
     def close_all(self) -> None:
-        """
-        Closes all connections in the pool and clears the connections dictionary.
-
-        This method should be called explicitly or is automatically invoked when the object
-        is destroyed or used as a context manager.
-        """
+        """Close all database connections in the pool."""
         for db_name, connections in self.pool.items():
-            for conn in connections:
-                try:
-                    conn.close()
-                    logger.info("Closed connection to database: %s", db_name)
-                except sqlite3.Error as e:
-                    logger.error("Error closing connection to %s: %s", db_name, e)
-            connections.clear()
-        self.pool.clear()
+            while connections:
+                conn = connections.pop()
+                conn.close()
+                logger.info(f"Closed connection to database: {db_name}")
         logger.info("All connections cleared")
 
     def __del__(self) -> None:
-        """
-        Destructor to ensure all connections are closed when the object is garbage collected.
-        """
-        logger.info("DBManager object is being destroyed, closing all connections")
-        self.close_all()
+        """Clean up resources when object is destroyed."""
+        logger.info("DBManager object is being destroyed; closing all connections")
+        try:
+            self.close_all()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
 
     def __enter__(self) -> 'DBManager':
-        """
-        Enables the use of the DBManager as a context manager.
-
-        Returns:
-            DBManager: The current instance of DBManager.
-        """
-        logger.info("Entering DBManager context")
+        """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+    def __exit__(self, exc_type: Optional[type],
+                exc_val: Optional[Exception],
+                exc_tb: Optional[Any]) -> None:
         """
-        Exits the DBManager context, ensuring all connections are closed.
-
+        Context manager exit.
+        
         Args:
-            exc_type: The type of the exception that caused the context to be exited.
-            exc_val: The instance of the exception that caused the context to be exited.
-            exc_tb: A traceback object encoding the stack trace.
-
-        Returns:
-            bool: False, indicating that any exception should be re-raised.
+            exc_type: Exception type if an error occurred
+            exc_val: Exception value if an error occurred
+            exc_tb: Exception traceback if an error occurred
         """
-        logger.info("Exiting DBManager context, closing all connections")
         self.close_all()
-        return False
-
-
-if __name__ == "__main__":
-    # Example: Using DBManager with connection pooling
-    connections = {}
-    pre = '../'
-    with open('config.env') as f:
-        for line in f:
-            name, path = line.strip().split('=')
-            connections[name.lower()] = pre + path
+        if exc_type is not None:
+            logger.error(f"An error occurred: {str(exc_val)}")
             
-    
-    db_manager = DBManager(connections, pool_size=3)
-
-    try:
-        # Reusing connections from the pool
-        for _ in range(5):
-            with db_manager.get_connection('daily_price_db') as conn:
+    @contextmanager
+    def connection(self, db_name: str) -> sqlite3.Connection:
+        """
+        Context manager for getting and returning database connections.
+        
+        Args:
+            db_name (str): Name of the database to connect to
+            
+        Yields:
+            sqlite3.Connection: Database connection
+            
+        Example:
+            with db_manager.connection('daily_db') as conn:
                 cursor = conn.cursor()
-                logger.info("Executing query on price_db: SELECT * FROM aapl")
-                cursor.execute("SELECT * FROM aapl")
-                print(len(cursor.fetchall()))
-
-            with db_manager.get_connection('intra_day_db') as conn:
-                cursor = conn.cursor()
-                logger.info("Executing query on user_db: select * from tem")
-                cursor.execute("SELECT * from tem")
-                print(len(cursor.fetchall()))
-    except Exception as e:
-        logger.error("An error occurred: %s", e)
-    finally:
-        db_manager.close_all()
+                cursor.execute("SELECT * FROM stocks")
+        """
+        conn = self.get_connection(db_name)
+        try:
+            yield conn
+        finally:
+            self.return_connection(db_name, conn)

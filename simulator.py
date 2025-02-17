@@ -51,7 +51,7 @@ import logging
 import time
 
 # Import the database manager (assumed to be implemented elsewhere)
-from dbm import DBManager
+from .dbm import DBManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -118,7 +118,7 @@ class MarketSim(DBManager):
         if intra_day_flag: 
             con = 'intra_day_db'
         else:
-            con = 'daily_price_db'
+            con = 'daily_db'
         with self.get_connection(con) as conn:
             for stock in stocks:
                 q = f'''select date(date) as "Date", close as "{stock}" from {stock} order by date(date) asc'''
@@ -409,22 +409,16 @@ class MarketSim(DBManager):
             
         logger.info(f"Portfolio value computation completed, final value: ${self.tracking['portfolio']['port_val'].iloc[-1]:,.2f}")
         return self.tracking
-        
+
+
+"""        
 if __name__ == "__main__":
-    print("\n(26) To whatever and wherever the restless and unsteady mind wanders this mind should be restrained then and there and brought under the control of the self alone. (And nothing else) \n\n")
-    connections = {}
-    pre = '../'
-    with open('config.env') as f:
-        for line in f:
-            name, path = line.strip().split('=')
-            connections[name.lower()] = pre + path
-            
     ms = MarketSim(connections, verbose = True)
     orders = pd.read_csv('orders/additional_orders/orders2.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
     orders = pd.read_csv('orders/DTLearn.csv', index_col='Date', parse_dates=True, na_values=['nan']).sort_index()
     d = ms.compute_portvals(orders, 1000000, commission = 9.95, impact = 0.005)
     #  $1,010,884.73    
-    
     # for i, k in d.items():
     #     print(f'\n\n{i}\n\n')
     #     print(k)
+"""
