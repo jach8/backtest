@@ -1,8 +1,0 @@
-README.md
-setup.py
-bt3ster.egg-info/PKG-INFO
-bt3ster.egg-info/SOURCES.txt
-bt3ster.egg-info/dependency_links.txt
-bt3ster.egg-info/entry_points.txt
-bt3ster.egg-info/requires.txt
-bt3ster.egg-info/top_level.txt

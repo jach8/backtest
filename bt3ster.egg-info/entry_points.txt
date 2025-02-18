@@ -1,2 +1,0 @@
-[console_scripts]
-backtest-price-data = main:main
