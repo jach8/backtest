@@ -1,0 +1,15 @@
+numpy>=1.0.0
+pandas>=1.0.0
+scipy>=1.0.0
+typing>=3.7.4
+datetime>=4.3
+tqdm>=4.0.0
+matplotlib>=3.0.0
+
+# Development dependencies
+pytest>=7.0
+pytest-cov>=3.0
+black>=22.0
+isort>=5.0
+mypy>=0.9
+pylint>=2.0
