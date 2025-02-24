@@ -118,12 +118,12 @@ Replace `path/to/` with the actual file paths to your database files.
 from policy import Policy
 
 # Load database connections
-connections = {}
-with open('config.env') as f:
-    for line in f:
-        name, path = line.strip().split('=')
-        connections[name.lower()] = path
-
+connections = {   
+    "daily_db": "data/stocks.db", 
+    "intraday_db": "data/stocks_intraday.db",
+    "ticker_path": "data/tickers.json",
+    "stock_names" : "data/stock_names.db"
+}
 # Initialize Policy
 policy = Policy(connections)
 ```
