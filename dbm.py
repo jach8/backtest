@@ -40,7 +40,7 @@ class DBManager:
             db_name: [] for db_name in connections if db_name in required_connections
         }
         
-        logger.info(f"DBManager initialized with connections: {self.connections.keys()} "
+        logger.debug(f"DBManager initialized with connections: {self.connections.keys()} "
                    f"and pool size: {self.pool_size}")
 
     def get_connection(self, db_name: str) -> sqlite3.Connection:
@@ -65,13 +65,13 @@ class DBManager:
         # Try to get an existing connection from the pool
         if self.pool[db_name]:
             conn = self.pool[db_name].pop()
-            logger.info(f"Reusing existing connection for database: {db_name}")
+            logger.debug(f"Reusing existing connection for database: {db_name}")
             return conn
 
         # Create new connection if pool isn't full
         if len(self.pool[db_name]) < self.pool_size:
             conn = self._create_connection(db_name)
-            logger.info(f"Created new connection for database: {db_name}")
+            logger.debug(f"Created new connection for database: {db_name}")
             return conn
             
         logger.error(f"Connection pool for database {db_name} is full")
@@ -87,9 +87,9 @@ class DBManager:
         """
         if len(self.pool[db_name]) < self.pool_size:
             self.pool[db_name].append(conn)
-            logger.info(f"Connection returned to pool for database: {db_name}")
+            logger.debug(f"Connection returned to pool for database: {db_name}")
         else:
-            logger.info(f"Pool for database {db_name} is full; connection closed")
+            logger.debug(f"Pool for database {db_name} is full; connection closed")
             conn.close()
 
     def _create_connection(self, db_name: str) -> sqlite3.Connection:
@@ -117,12 +117,12 @@ class DBManager:
             while connections:
                 conn = connections.pop()
                 conn.close()
-                logger.info(f"Closed connection to database: {db_name}")
+                logger.debug(f"Closed connection to database: {db_name}")
         logger.info("All connections cleared")
 
     def __del__(self) -> None:
         """Clean up resources when object is destroyed."""
-        logger.info("DBManager object is being destroyed; closing all connections")
+        logger.debug("DBManager object is being destroyed; closing all connections")
         try:
             self.close_all()
         except Exception as e:
