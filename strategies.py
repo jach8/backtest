@@ -24,6 +24,7 @@ class Policy:
 
         Args:
             db_connections (Dict[str, str]): Database connections
+            verbose
         """
         self.marketsim = MarketSim(db_connections, verbose)
         self.orders = None
@@ -127,43 +128,21 @@ class Policy:
         if self.stock_prices is None or self.stock is None:
             raise ValueError("Strategy not properly initialized")
 
+        D = 1
 
         df = pd.DataFrame(index=self.stock_prices.index)
         price_series = self.stock_prices[self.stock]
+        future_prices = price_series.shift(-D)
 
         df['Symbol'] = self.stock
         df['Shares'] = self.trade_size if self.trade_size else 100
-        df['Order'] = np.where(price_series < price_series.shift(-D), 'BUY', 'SELL')
+        df['Order'] = np.where(future_prices > price_series, 'BUY', 'SELL')
 
         # # Close out open trades 
         df2 = df.copy().shift(D).dropna()
         df2['Order'] = np.where(df2['Order'] == 'BUY', 'SELL', 'BUY')
         df2['Shares'] = df2['Shares']
         return pd.concat([df, df2], axis=0).dropna().sort_index()
-
-    def evaluate_policy(self, 
-            orders: pd.DataFrame, 
-            sv: float, 
-            commission: float = 9.95, impact: float = 0.005,
-            name: Optional[str] = None
-        ) -> pd.DataFrame:
-        """
-        Evaluate a trading policy.
-
-        Args:
-            orders (pd.DataFrame): Trading orders
-            sv (float): Starting value
-            commission (float): Trading commission
-            impact (float): Market impact
-            name (str, optional): Strategy name
-
-        Returns:
-            pd.DataFrame: Performance metrics
-        """
-        self._initialize_params(orders)
-        portvals = self.marketsim.compute_portvals(orders, sv, commission, impact)
-        return portvals['portfolio']
-        # return portvals
 
     def eval_multiple_orders(self, 
             orders: List[pd.DataFrame], 
@@ -207,7 +186,6 @@ class Policy:
             results.loc[name, 'Commission'] = commission
             results.loc[name, 'Impact'] = impact
             self.list_eval[name] = portvals
-
 
         # Add the buy and hold and optimal policy to the results
         self.list_eval['Buy and Hold'] = self.marketsim.compute_portvals(self.buy_and_hold(sv), startval = sv, impact = 0, commission = 0 )    
@@ -300,7 +278,7 @@ class Policy:
     def eval_multiple_orders_with_config(self,
             orders: List[pd.DataFrame],
             names: List[str],
-            config: 'BacktestConfig'
+            config: BacktestConfig
         ) -> pd.DataFrame:
         """
         Evaluate multiple trading policies using BacktestConfig parameters.

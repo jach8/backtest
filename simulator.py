@@ -344,7 +344,9 @@ class MarketSim(DBManager):
         """Print the Order details if verbose is enabled."""
         if self.verbose:
             cash = self.__get_current_cash(date)
-            logger.debug("%s Order: %d shares of %s, Cash Balance: $%.2f", order, shares, stock.upper(), cash)
+            price = self.tracking['stock_prices'].loc[date, stock]
+            logger.debug("%s Order: %d shares of %s @ %.2f, Cash Balance: $%.2f", 
+                     order, shares, stock.upper(), price, cash)
 
     def __ExecuteOrder(self, date: dt.datetime, stock: str, order: str, shares: int, stock_price: float, 
                        commission: float = 5.50, impact: float = 0.005) -> None:
@@ -373,7 +375,13 @@ class MarketSim(DBManager):
             self.__HoldOrder(date, stock, stock_price)
         self.__VerboseOrder(date, stock, order, shares)
 
-    def compute_portvals(self, orders: pd.DataFrame, startval: float, commission: float = 5.50, impact: float = 0.005) -> Dict[str, pd.DataFrame]:
+    def compute_portvals(self, 
+            orders: pd.DataFrame, 
+            startval: float, 
+            commission: float = 5.50, 
+            impact: float = 0.005,
+            strategy_nam: Optional[str] = None,
+        ) -> Dict[str, pd.DataFrame]:
         """
         Compute the portfolio value. This function will iterate through the orders dataframe and execute the orders. 
         This function also creates two new entries in the tracking dictionary:
@@ -407,11 +415,22 @@ class MarketSim(DBManager):
             shares = row['Shares']
             stock_price = self.tracking['stock_prices'].loc[date, stock]
             self.__ExecuteOrder(date, stock, order, shares, stock_price, commission, impact)
-            self.tracking['portfolio'] = self.tracking['stock_prices'] * self.tracking['trades'].cumsum()
-            self.tracking['portfolio']['port_val'] = self.tracking['portfolio'].sum(axis=1)
+            # self.tracking['portfolio'] = self.tracking['stock_prices'] * self.tracking['trades'].cumsum()
+            # self.tracking['portfolio']['port_val'] = self.tracking['portfolio'].sum(axis=1)
+        
+        # Calculate portfolio value
+        holdings = self.tracking['trades'].cumsum()
+        self.tracking['portfolio'] = self.tracking['stock_prices'] * holdings
+        self.tracking['portfolio']['port_val'] = self.tracking['portfolio'].sum(axis=1)
+        
+        # Add value of open positions
+        final_date = self.tracking['portfolio'].index[-1]
+        final_holdings = holdings.loc[final_date]
+        final_value = self.tracking['portfolio']['port_val'].iloc[-1]
+        logger.info(f"Final value: ${final_value:,.2f}, Holdings: {final_holdings.to_dict()}")
             
-        logger.info(f"Portfolio value computation completed, final value: ${self.tracking['portfolio']['port_val'].iloc[-1]:,.2f}")
-        # CLose connections
+        # logger.info(f"Final value: ${self.tracking['portfolio']['port_val'].iloc[-1]:,.2f}")
+
         return self.tracking
 
 
