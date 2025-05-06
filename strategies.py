@@ -130,19 +130,46 @@ class Policy:
 
         D = 1
 
+        # df = pd.DataFrame(index=self.stock_prices.index)
+        # price_series = self.stock_prices[self.stock]
+        # future_prices = price_series.shift(-D)
+
+        # df['Symbol'] = self.stock
+        # df['Shares'] = self.trade_size if self.trade_size else 100
+        # df['Order'] = np.where(future_prices > price_series, 'BUY', 'SELL')
+
+        # # # Close out open trades 
+        # df2 = df.copy().shift(D).dropna()
+        # df2['Order'] = np.where(df2['Order'] == 'BUY', 'SELL', 'BUY')
+        # df2['Shares'] = df2['Shares']
+        # return pd.concat([df, df2], axis=0).dropna().sort_index()
+
         df = pd.DataFrame(index=self.stock_prices.index)
-        price_series = self.stock_prices[self.stock]
-        future_prices = price_series.shift(-D)
-
         df['Symbol'] = self.stock
-        df['Shares'] = self.trade_size if self.trade_size else 100
-        df['Order'] = np.where(future_prices > price_series, 'BUY', 'SELL')
+        df['Order'] = 'HOLD'
+        df['Shares'] = 0
 
-        # # Close out open trades 
-        df2 = df.copy().shift(D).dropna()
-        df2['Order'] = np.where(df2['Order'] == 'BUY', 'SELL', 'BUY')
-        df2['Shares'] = df2['Shares']
-        return pd.concat([df, df2], axis=0).dropna().sort_index()
+        price_series = self.stock_prices[self.stock]
+        for i in range(len(price_series) - D):
+            curr_price = price_series.iloc[i]
+            future_price = price_series.iloc[i + D]
+            
+            # Close any existing position
+            if i > 0 and df.iloc[i-1]['Order'] == 'BUY':
+                df.iloc[i, df.columns.get_loc('Order')] = 'SELL'
+                df.iloc[i, df.columns.get_loc('Shares')] = self.trade_size
+
+            # Open new position if profitable
+            if future_price > curr_price:
+                df.iloc[i, df.columns.get_loc('Order')] = 'BUY'
+                df.iloc[i, df.columns.get_loc('Shares')] = self.trade_size
+
+        # Close any remaining position on last day
+        if df.iloc[-2]['Order'] == 'BUY':
+            df.iloc[-1, df.columns.get_loc('Order')] = 'SELL'
+            df.iloc[-1, df.columns.get_loc('Shares')] = self.trade_size
+
+        return df
 
     def eval_multiple_orders(self, 
             orders: List[pd.DataFrame], 
